@@ -2,6 +2,16 @@ import json
 import os
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+CONFIG_DIR = Path("/etc/enterprisebot-config")
+
+
+def config_value(name):
+    config_path = CONFIG_DIR / name
+    if config_path.is_file():
+        return config_path.read_text(encoding="utf-8").rstrip("\r\n")
+    return os.environ.get(name, "")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -22,8 +32,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(
                 200,
                 {
-                    "app": os.environ.get("APP_NAME", ""),
-                    "version": os.environ.get("VERSION", ""),
+                    "app": config_value("APP_NAME"),
+                    "version": config_value("VERSION"),
                     "pod": socket.gethostname(),
                 },
             )

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "enterprisebot-devops-platform.fullname" . }}
+  labels:
+    {{- include "enterprisebot-devops-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "enterprisebot-devops-platform.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "enterprisebot-devops-platform.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ include "enterprisebot-devops-platform.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "enterprisebot-devops-platform.fullname" . }}-config
+                  key: APP_NAME
+            - name: VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "enterprisebot-devops-platform.fullname" . }}-config
+                  key: VERSION
+          volumeMounts:
+            - name: app-config
+              mountPath: /etc/enterprisebot-config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+      volumes:
+        - name: app-config
+          configMap:
+            name: {{ include "enterprisebot-devops-platform.fullname" . }}-config
