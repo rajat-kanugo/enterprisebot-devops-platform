@@ -1,86 +1,103 @@
 # Findings — Part 4 debug lab
 
-Fill in one entry per defect you find. Paste the *actual* output you saw —
-we cross-check it against your session recording and your git diff, and the
-diagnostic path matters more to us than the fix itself.
+The recording was started with `script -q part4-session.log` before investigation. The latest captured `./scenario.sh verify` was not green: reporter readiness/reporting and backend/gateway probes still failed. Remaining failures are marked explicitly below rather than claimed as fixed.
 
-Before you start investigating, begin recording:
-`script -q part4-session.log` (or `asciinema rec part4-session.cast`), and
-commit that file alongside this one.
+## Defect 1 — Migration Job restart policy
 
----
+**Symptom** (observed during `./scenario.sh up`):
 
-## Defect 1
+```text
+Job.batch "migrate" is invalid: spec.template.spec.restartPolicy: Required value: valid values: "OnFailure", "Never"
+```
 
-**Symptom** (what you observed — paste the real command output):
+**Cause:** The Job template used `restartPolicy: Always`, which is not valid for a Job.
 
-**Cause** (the actual root cause, not the symptom restated):
+**Fix:** Changed the Job to `restartPolicy: Never`; the later verification reported `PASS migrate Job completed`.
 
-**Fix** (what you changed, and why this over alternatives):
+**How I found it:** Ran `./scenario.sh up` and followed the server-side apply error to `templates/migrate-job.yaml`.
 
-**How I found it** (the sequence of commands/reasoning that led you here):
+## Defect 2 — Non-numeric image user
 
----
+**Symptom** (`kubectl get events` / `kubectl describe pods`):
 
-## Defect 2
+```text
+container has runAsNonRoot and image has non-numeric user (nonroot), cannot verify user is non-root
+```
 
-**Symptom:**
+**Cause:** The chart set `runAsNonRoot: true` but did not set a numeric UID; the image declares its user by the name `nonroot`.
 
-**Cause:**
+**Fix:** Added `runAsUser: 65532` to the workload container security contexts. New pods subsequently started.
 
-**Fix:**
+**How I found it:** Inspected pod events and `kubectl describe pod` after the initial install.
 
-**How I found it:**
+## Defect 3 — Metrics CPU exceeded the namespace limit
 
----
+**Symptom** (ReplicaSet events):
 
-## Defect 3
+```text
+is forbidden: maximum cpu usage per Container is 1, but limit is 4
+```
 
-**Symptom:**
+The chart requested `2` CPU and limited metrics to `4`.
 
-**Cause:**
+**Cause:** Metrics resources exceeded the `debug-lab` LimitRange maximum of `1` CPU.
 
-**Fix:**
+**Fix:** Reduced metrics CPU request/limit to `100m`/`500m`.
 
-**How I found it:**
+**How I found it:** Read `kubectl get events` and compared the rejection with metrics resources in `values.yaml`.
 
----
+## Defect 4 — Service port and gateway target configuration
 
-## Defect 4
+**Symptom** (`kubectl logs` / `kubectl describe pod`):
 
-**Symptom:**
+```text
+listening on :8081 (image default is 8081; set PORT to override)
+```
 
-**Cause:**
+The chart probes and service target used port `8080`. The gateway was also configured with `http://backend.default.svc:8080` although the backend is in `debug-lab`.
 
-**Fix:**
+**Cause:** The image default port and chart port disagreed, and the gateway URL targeted the wrong namespace.
 
-**How I found it:**
+**Fix:** Set `PORT: "8080"` for the app deployments and set `BACKEND_URL` to `http://backend:8080`. Later logs showed backend/gateway endpoints and HTTP 200 responses. However, the latest captured verify still reported backend/gateway probe failures.
 
----
+**How I found it:** Compared `kubectl describe pod` environment and readiness settings with backend/gateway logs and service endpoints.
 
-## Defect 5
+**Failure is not yet diagnosed:** The latest verification’s backend and gateway checks have not yet been confirmed green after those later 200 responses.
 
-**Symptom:**
+## Defect 5 — Worker cache on a read-only filesystem
 
-**Cause:**
+**Symptom** (`kubectl logs deployment/worker --previous`):
 
-**Fix:**
+```text
+FATAL: worker could not initialise its cache: mkdir /var/cache/app: read-only file system
+```
 
-**How I found it:**
+**Cause:** The worker needed a writable `/var/cache/app` while the container root filesystem was read-only.
 
----
+**Fix:** Added an `emptyDir` volume mounted at `/var/cache/app`, keeping the root filesystem read-only. The worker later reported `1/1 Running`, and verification reported no CrashLoopBackOff pods.
 
-## Defect 6
+**How I found it:** Read the previous worker-container logs after observing its restart.
 
-**Symptom:**
+## Defect 6 — Reporter ServiceAccount binding and remaining parse failure
 
-**Cause:**
+**Symptom:** Initially, the authorization check returned `no`; the RoleBinding subject was `default` while the reporter Deployment uses ServiceAccount `reporter`. After the binding change, verification reported:
 
-**Fix:**
+```text
+PASS ServiceAccount debug-lab/reporter can list pods
+```
 
-**How I found it:**
+But the reporter still logged:
 
----
+```text
+pod list failed: parse pod list: unexpected end of JSON input
+```
 
-If you ran out of time on any defect, say so here and describe what you would
-have tried next — that section is read carefully and counts in your favour.
+and its readiness probe returned HTTP 503; the reporter Service had no endpoints.
+
+**Cause:** The initial RoleBinding targeted the wrong ServiceAccount. That mismatch is fixed. The remaining empty/invalid pod-list response is not explained by the passing authorization check.
+
+**Fix:** Changed the RoleBinding subject to `reporter`.
+
+**How I found it:** Checked `kubectl auth can-i`, inspected the RoleBinding, then read logs and described the current reporter pod.
+
+**Failure is not yet diagnosed:** Reporter readiness and `/report` remain failing; the latest verify was not all green.

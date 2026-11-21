@@ -16,10 +16,16 @@ spec:
         app: worker
         {{- include "lab.labels" . | nindent 8 }}
     spec:
+      volumes:
+        - name: cache
+          emptyDir: {}
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/app
           ports:
             - name: http
               containerPort: {{ .Values.common.port }}
@@ -37,6 +43,7 @@ spec:
             timeoutSeconds: 3
           securityContext:
             runAsNonRoot: true
+            runAsUser: 65532
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
